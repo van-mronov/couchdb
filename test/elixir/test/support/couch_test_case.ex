@@ -7,6 +7,7 @@ defmodule CouchTestCase do
       use ExUnit.Case
 
       import Couch.DBTest
+      import Couch.ConnTest
     end
   end
 

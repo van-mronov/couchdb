@@ -9,21 +9,24 @@ defmodule BasicsTest do
   """
 
   test "Session contains adm context" do
-    user_ctx = Couch.get("/_session").body["userCtx"]
-    assert user_ctx["name"] == "adm", "Should have adm user context"
-    assert user_ctx["roles"] == ["_admin"], "Should have _admin role"
+    assert %{
+             "userCtx" => %{
+               "name" => "adm",
+               "roles" => ["_admin"]
+             }
+           } = json_response(Couch.get("/_session"), 200)
   end
 
   test "Welcome endpoint" do
-    assert Couch.get("/").body["couchdb"] == "Welcome", "Should say welcome"
+    assert %{"couchdb" => "Welcome"} = json_response(Couch.get("/"), 200)
   end
 
   @tag :with_db
-  test "PUT on existing DB should return 412 instead of 500", context do
-    db_name = context[:db_name]
-    resp = Couch.put("/#{db_name}")
-    assert resp.status_code == 412
-    refute resp.body["ok"]
+  test "PUT on existing DB should return 412 instead of 500", %{db_name: db_name} do
+    assert json_response(Couch.put("/#{db_name}"), 412) == %{
+             "error" => "file_exists",
+             "reason" => "The database could not be created, the file already exists."
+           }
   end
 
   @tag :with_db_name
@@ -46,61 +49,60 @@ defmodule BasicsTest do
   end
 
   @tag :with_db
-  test "Created database has appropriate db info name", context do
-    db_name = context[:db_name]
-
-    assert Couch.get("/#{db_name}").body["db_name"] == db_name,
-           "Get correct database name"
+  test "Created database has appropriate db info name", %{db_name: db_name} do
+    assert %{"db_name" => ^db_name} = json_response(Couch.get("/#{db_name}"), 200)
   end
 
   @tag :with_db
-  test "Database should be in _all_dbs", context do
-    assert context[:db_name] in Couch.get("/_all_dbs").body, "Db name in _all_dbs"
+  test "Database should be in _all_dbs", %{db_name: db_name} do
+    assert db_name in json_response(Couch.get("/_all_dbs"), 200)
   end
 
   @tag :with_db
-  test "Empty database should have zero docs", context do
-    assert Couch.get("/#{context[:db_name]}").body["doc_count"] == 0,
-           "Empty doc count in empty db"
+  test "Empty database should have zero docs", %{db_name: db_name} do
+    assert %{"doc_count" => 0} = json_response(Couch.get("/#{db_name}"), 200)
   end
 
   @tag :with_db
-  test "Create a document and save it to the database", context do
-    resp = Couch.post("/#{context[:db_name]}", body: %{:_id => "0", :a => 1, :b => 1})
-    assert resp.status_code == 201, "Should be 201 created"
-    assert resp.body["id"], "Id should be present"
-    assert resp.body["rev"], "Rev should be present"
+  test "Create a document and save it to the database", %{db_name: db_name} do
+    id = "0"
+    resp = Couch.post("/#{db_name}", body: %{_id: id, a: 1, b: 1})
+    assert %{"id" => ^id, "rev" => rev} = json_response(resp, 201)
 
-    resp2 = Couch.get("/#{context[:db_name]}/#{resp.body["id"]}")
-    assert resp2.body["_id"] == resp.body["id"], "Ids should match"
-    assert resp2.body["_rev"] == resp.body["rev"], "Revs should match"
+    resp = Couch.get("/#{db_name}/#{id}")
+    assert %{"_id" => ^id, "_rev" => ^rev} = json_response(resp, 200)
   end
 
   @tag :with_db
-  test "Revs info status is good", context do
-    db_name = context[:db_name]
+  test "Revs info status is available", %{db_name: db_name} do
     {:ok, _} = create_doc(db_name, sample_doc_foo())
-    resp = Couch.get("/#{db_name}/foo", query: %{:revs_info => true})
-    assert hd(resp.body["_revs_info"])["status"] == "available", "Revs info is available"
+    resp = Couch.get("/#{db_name}/foo", query: %{revs_info: true})
+
+    assert %{
+             "_revs_info" => [%{"status" => "available"} | _]
+           } = json_response(resp, 200)
   end
 
   @tag :with_db
-  test "Make sure you can do a seq=true option", context do
-    db_name = context[:db_name]
+  test "Make sure you can do a seq=true option", %{db_name: db_name} do
     {:ok, _} = create_doc(db_name, sample_doc_foo())
-    resp = Couch.get("/#{db_name}/foo", query: %{:local_seq => true})
-    assert resp.body["_local_seq"] == 1, "Local seq value == 1"
+    resp = Couch.get("/#{db_name}/foo", query: %{local_seq: true})
+    assert %{"_local_seq" => 1} = json_response(resp, 200)
   end
 
   @tag :with_db
-  test "Can create several documents", context do
-    db_name = context[:db_name]
-    assert Couch.post("/#{db_name}", body: %{:_id => "1", :a => 2, :b => 4}).body["ok"]
-    assert Couch.post("/#{db_name}", body: %{:_id => "2", :a => 3, :b => 9}).body["ok"]
-    assert Couch.post("/#{db_name}", body: %{:_id => "3", :a => 4, :b => 16}).body["ok"]
+  test "Can create several documents", %{db_name: db_name} do
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "1", a: 2, b: 4}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "2", a: 3, b: 9}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "3", a: 4, b: 16}), 201)
 
     retry_until(fn ->
-      Couch.get("/#{db_name}").body["doc_count"] == 3
+      json_response(Couch.get("/#{db_name}"), 200)["doc_count"] == 3
     end)
   end
 
@@ -127,61 +129,80 @@ defmodule BasicsTest do
   end
 
   @tag :with_db
-  test "Simple map functions", context do
-    db_name = context[:db_name]
+  test "Simple map functions", %{db_name: db_name} do
     map_fun = "function(doc) { if (doc.a==4) { emit(null, doc.b); } }"
     red_fun = "function(keys, values) { return sum(values); }"
-    map_doc = %{:views => %{:baz => %{:map => map_fun}}}
-    red_doc = %{:views => %{:baz => %{:map => map_fun, :reduce => red_fun}}}
+    map_doc = %{views: %{baz: %{map: map_fun}}}
+    red_doc = %{views: %{baz: %{map: map_fun, reduce: red_fun}}}
 
     # Bootstrap database and ddoc
-    assert Couch.post("/#{db_name}", body: %{:_id => "0", :a => 1, :b => 1}).body["ok"]
-    assert Couch.post("/#{db_name}", body: %{:_id => "1", :a => 2, :b => 4}).body["ok"]
-    assert Couch.post("/#{db_name}", body: %{:_id => "2", :a => 3, :b => 9}).body["ok"]
-    assert Couch.post("/#{db_name}", body: %{:_id => "3", :a => 4, :b => 16}).body["ok"]
-    assert Couch.put("/#{db_name}/_design/foo", body: map_doc).body["ok"]
-    assert Couch.put("/#{db_name}/_design/bar", body: red_doc).body["ok"]
-    assert Couch.get("/#{db_name}").body["doc_count"] == 6
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "0", a: 1, b: 1}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "1", a: 2, b: 4}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "2", a: 3, b: 9}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{_id: "3", a: 4, b: 16}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.put("/#{db_name}/_design/foo", body: map_doc), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.put("/#{db_name}/_design/bar", body: red_doc), 201)
+
+    assert %{"doc_count" => 6} = json_response(Couch.get("/#{db_name}"), 200)
 
     # Initial view query test
-    resp = Couch.get("/#{db_name}/_design/foo/_view/baz")
-    assert resp.body["total_rows"] == 1
-    assert hd(resp.body["rows"])["value"] == 16
+    assert %{
+             "total_rows" => 1,
+             "rows" => [%{"value" => 16} | _]
+           } = json_response(Couch.get("/#{db_name}/_design/foo/_view/baz"), 200)
 
     # Modified doc and test for updated view results
     doc0 = Couch.get("/#{db_name}/0").body
     doc0 = Map.put(doc0, :a, 4)
-    assert Couch.put("/#{db_name}/0", body: doc0).body["ok"]
+    assert %{"ok" => true} = json_response(Couch.put("/#{db_name}/0", body: doc0), 201)
 
     retry_until(fn ->
-      Couch.get("/#{db_name}/_design/foo/_view/baz").body["total_rows"] == 2
+      json_response(Couch.get("/#{db_name}/_design/foo/_view/baz"), 200)["total_rows"] ==
+        2
     end)
 
     # Write 2 more docs and test for updated view results
-    assert Couch.post("/#{db_name}", body: %{:a => 3, :b => 9}).body["ok"]
-    assert Couch.post("/#{db_name}", body: %{:a => 4, :b => 16}).body["ok"]
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{a: 3, b: 9}), 201)
+
+    assert %{"ok" => true} =
+             json_response(Couch.post("/#{db_name}", body: %{a: 4, b: 16}), 201)
 
     retry_until(fn ->
-      Couch.get("/#{db_name}/_design/foo/_view/baz").body["total_rows"] == 3
+      json_response(Couch.get("/#{db_name}/_design/foo/_view/baz"), 200)["total_rows"] ==
+        3
     end)
 
-    assert Couch.get("/#{db_name}").body["doc_count"] == 8
+    assert %{"doc_count" => 8} = json_response(Couch.get("/#{db_name}"), 200)
 
     # Test reduce function
-    resp = Couch.get("/#{db_name}/_design/bar/_view/baz")
-    assert hd(resp.body["rows"])["value"] == 33
+    assert %{
+             "rows" => [%{"value" => 33} | _]
+           } = json_response(Couch.get("/#{db_name}/_design/bar/_view/baz"), 200)
 
     # Delete doc and test for updated view results
-    doc0 = Couch.get("/#{db_name}/0").body
-    assert Couch.delete("/#{db_name}/0?rev=#{doc0["_rev"]}").body["ok"]
+    %{"_rev" => rev} = json_response(Couch.get("/#{db_name}/0"), 200)
+    assert %{"ok" => true} = json_response(Couch.delete("/#{db_name}/0?rev=#{rev}"), 200)
 
     retry_until(fn ->
-      Couch.get("/#{db_name}/_design/foo/_view/baz").body["total_rows"] == 2
+      json_response(Couch.get("/#{db_name}/_design/foo/_view/baz"), 200)["total_rows"] ==
+        2
     end)
 
-    assert Couch.get("/#{db_name}").body["doc_count"] == 7
-    assert Couch.get("/#{db_name}/0").status_code == 404
-    refute Couch.get("/#{db_name}/0?rev=#{doc0["_rev"]}").status_code == 404
+    assert %{"doc_count" => 7} = json_response(Couch.get("/#{db_name}"), 200)
+    assert %{"error" => _error} = json_response(Couch.get("/#{db_name}/0"), 404)
+    assert json_response(Couch.get("/#{db_name}/0?rev=#{rev}"), 200)
   end
 
   @tag :with_db
@@ -197,12 +218,10 @@ defmodule BasicsTest do
   end
 
   @tag :with_db
-  test "POST doc with an _id field isn't overwritten by uuid", context do
-    db_name = context[:db_name]
-    resp = Couch.post("/#{db_name}", body: %{:_id => "oppossum", :yar => "matey"})
-    assert resp.body["ok"]
-    assert resp.body["id"] == "oppossum"
-    assert Couch.get("/#{db_name}/oppossum").body["yar"] == "matey"
+  test "POST doc with an _id field isn't overwritten by uuid", %{db_name: db_name} do
+    resp = Couch.post("/#{db_name}", body: %{_id: "oppossum", yar: "matey"})
+    assert %{"id" => "oppossum", "ok" => true} = json_response(resp, 201)
+    assert %{"yar" => "matey"} = json_response(Couch.get("/#{db_name}/oppossum"), 200)
   end
 
   @tag :pending
@@ -216,74 +235,68 @@ defmodule BasicsTest do
   end
 
   @tag :with_db
-  test "DELETE'ing a non-existent doc should 404", context do
-    db_name = context[:db_name]
-    assert Couch.delete("/#{db_name}/doc-does-not-exist").status_code == 404
+  test "DELETE'ing a non-existent doc should 404", %{db_name: db_name} do
+    assert json_response(Couch.delete("/#{db_name}/doc-does-not-exist"), 404)
   end
 
   @tag :with_db
-  test "Check for invalid document members", context do
-    db_name = context[:db_name]
-
+  test "Check for invalid document members", %{db_name: db_name} do
     bad_docs = [
-      {:goldfish, %{:_zing => 4}},
-      {:zebrafish, %{:_zoom => "hello"}},
-      {:mudfish, %{:zane => "goldfish", :_fan => "something smells delicious"}},
-      {:tastyfish, %{:_bing => %{"wha?" => "soda can"}}}
+      {:goldfish, %{_zing: 4}},
+      {:zebrafish, %{_zoom: "hello"}},
+      {:mudfish, %{zane: "goldfish", _fan: "something smells delicious"}},
+      {:tastyfish, %{_bing: %{"wha?" => "soda can"}}}
     ]
 
     Enum.each(bad_docs, fn {id, doc} ->
-      resp = Couch.put("/#{db_name}/#{id}", body: doc)
-      assert resp.status_code == 400
-      assert resp.body["error"] == "doc_validation"
+      assert %{
+               "error" => "doc_validation"
+             } = json_response(Couch.put("/#{db_name}/#{id}", body: doc), 400)
 
-      resp = Couch.post("/#{db_name}", body: doc)
-      assert resp.status_code == 400
-      assert resp.body["error"] == "doc_validation"
+      assert %{
+               "error" => "doc_validation"
+             } = json_response(Couch.post("/#{db_name}", body: doc), 400)
     end)
   end
 
   @tag :with_db
-  test "PUT error when body not an object", context do
-    db_name = context[:db_name]
-    resp = Couch.put("/#{db_name}/bar", body: "[]")
-    assert resp.status_code == 400
-    assert resp.body["error"] == "bad_request"
-    assert resp.body["reason"] == "Document must be a JSON object"
+  test "PUT error when body not an object", %{db_name: db_name} do
+    assert %{
+             "error" => "bad_request",
+             "reason" => "Document must be a JSON object"
+           } = json_response(Couch.put("/#{db_name}/bar", body: "[]"), 400)
   end
 
   @tag :with_db
-  test "_bulk_docs POST error when body not an object", context do
-    db_name = context[:db_name]
-    resp = Couch.post("/#{db_name}/_bulk_docs", body: "[]")
-    assert resp.status_code == 400
-    assert resp.body["error"] == "bad_request"
-    assert resp.body["reason"] == "Request body must be a JSON object"
+  test "_bulk_docs POST error when body not an object", %{db_name: db_name} do
+    assert %{
+             "error" => "bad_request",
+             "reason" => "Request body must be a JSON object"
+           } = json_response(Couch.post("/#{db_name}/_bulk_docs", body: "[]"), 400)
   end
 
   @tag :with_db
-  test "_all_docs POST error when multi-get is not a {'key': [...]} structure", context do
-    db_name = context[:db_name]
-    resp = Couch.post("/#{db_name}/_all_docs", body: "[]")
-    assert resp.status_code == 400
-    assert resp.body["error"] == "bad_request"
-    assert resp.body["reason"] == "Request body must be a JSON object"
+  test "_all_docs POST error when multi-get is not a {'key': [...]} structure", %{
+    db_name: db_name
+  } do
+    assert %{
+             "error" => "bad_request",
+             "reason" => "Request body must be a JSON object"
+           } = json_response(Couch.post("/#{db_name}/_all_docs", body: "[]"), 400)
 
-    resp = Couch.post("/#{db_name}/_all_docs", body: %{:keys => 1})
-    assert resp.status_code == 400
-    assert resp.body["error"] == "bad_request"
-    assert resp.body["reason"] == "`keys` body member must be an array."
+    assert %{
+             "error" => "bad_request",
+             "reason" => "`keys` body member must be an array."
+           } = json_response(Couch.post("/#{db_name}/_all_docs", body: %{keys: 1}), 400)
   end
 
   @tag :with_db
-  test "oops, the doc id got lost in code nirwana", context do
-    db_name = context[:db_name]
-    resp = Couch.delete("/#{db_name}/?rev=foobarbaz")
-    assert resp.status_code == 400, "should return a bad request"
-    assert resp.body["error"] == "bad_request"
-
-    assert resp.body["reason"] ==
-             "You tried to DELETE a database with a ?=rev parameter. Did you mean to DELETE a document instead?"
+  test "oops, the doc id got lost in code nirwana", %{db_name: db_name} do
+    assert %{
+             "error" => "bad_request",
+             "reason" =>
+               "You tried to DELETE a database with a ?=rev parameter. Did you mean to DELETE a document instead?"
+           } = json_response(Couch.delete("/#{db_name}/?rev=foobarbaz"), 400)
   end
 
   @tag :pending
