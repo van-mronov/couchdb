@@ -168,8 +168,8 @@ defmodule BasicsTest do
     assert %{"ok" => true} = json_response(Couch.put("/#{db_name}/0", body: doc0), 201)
 
     retry_until(fn ->
-      json_response(Couch.get("/#{db_name}/_design/foo/_view/baz"), 200)["total_rows"] ==
-        2
+      response = Couch.get("/#{db_name}/_design/foo/_view/baz")
+      json_response(response, 200)["total_rows"] == 2
     end)
 
     # Write 2 more docs and test for updated view results
@@ -180,8 +180,8 @@ defmodule BasicsTest do
              json_response(Couch.post("/#{db_name}", body: %{a: 4, b: 16}), 201)
 
     retry_until(fn ->
-      json_response(Couch.get("/#{db_name}/_design/foo/_view/baz"), 200)["total_rows"] ==
-        3
+      response = Couch.get("/#{db_name}/_design/foo/_view/baz")
+      json_response(response, 200)["total_rows"] == 3
     end)
 
     assert %{"doc_count" => 8} = json_response(Couch.get("/#{db_name}"), 200)
@@ -276,9 +276,9 @@ defmodule BasicsTest do
   end
 
   @tag :with_db
-  test "_all_docs POST error when multi-get is not a {'key': [...]} structure", %{
-    db_name: db_name
-  } do
+  test "_all_docs POST error when multi-get is not a {'key': [...]} structure", context do
+    %{db_name: db_name} = context
+
     assert %{
              "error" => "bad_request",
              "reason" => "Request body must be a JSON object"
